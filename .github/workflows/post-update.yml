@@ -1,0 +1,65 @@
+name: Post-update actions
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - overrides.json
+
+permissions:
+  contents: write
+
+concurrency:
+  group: post-update
+  cancel-in-progress: false
+
+jobs:
+  post-update:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set $meta.updated_on
+        run: |
+          python3 - <<'EOF'
+          import json, re
+          from datetime import datetime, timezone
+
+          path = "overrides.json"
+          with open(path, encoding="utf-8", newline="") as f:
+              text = f.read()
+
+          json.loads(text)
+          now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          text, count = re.subn(r'("updated_on"\s*:\s*)"[^"]*"', rf'\g<1>"{now}"', text, count=1)
+          if count != 1:
+              raise SystemExit("updated_on field not found in overrides.json")
+
+          with open(path, "w", encoding="utf-8", newline="") as f:
+              f.write(text)
+          EOF
+
+      - name: Generate overrides.min.json
+        run: |
+          python3 - <<'EOF'
+          import json
+
+          with open("overrides.json", encoding="utf-8") as f:
+              data = json.load(f)
+
+          with open("overrides.min.json", "w", encoding="utf-8", newline="") as f:
+              json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+          EOF
+
+      - name: Commit and push
+        run: |
+          git add overrides.json overrides.min.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Post-update: refresh updated_on and overrides.min.json"
+          git push
